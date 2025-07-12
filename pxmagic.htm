@@ -2599,10 +2599,14 @@
       const pattern = gId("pattern").value;
       console.log("Pattern type for chunking:", pattern);
       
+      // Store the first chunk for resending after the last chunk
+      const firstChunk = chunks.length > 0 ? [...chunks[0]] : null;
+      
       // Continue with normal chunk sending for non-Range patterns
       
       for (let i = 0; i < chunks.length; i++) {
-        progressText.textContent = `Sending chunk ${i + 1} of ${chunks.length}...`;
+        const isLastChunk = i === chunks.length - 1;
+        progressText.textContent = `Sending chunk ${i + 1} of ${chunks.length}${isLastChunk ? ' (final chunk)' : ''}...`;
         
         // Analyze what pixels this chunk represents
         console.log(`\n--- Chunk ${i + 1} Analysis ---`);
@@ -2711,6 +2715,56 @@
           
         } catch (error) {
           progressIndicator.classList.remove("show");
+          throw error;
+        }
+      }
+      
+      // Resend the first chunk after sending all chunks
+      if (firstChunk && chunks.length > 0) {
+        console.log("\n=== RESENDING FIRST CHUNK ===");
+        progressText.textContent = `Resending first chunk (finalizing)...`;
+        
+        const firstChunkPayload = {
+          on: true,
+          bri: brightness,
+          seg: {
+            id: segmentId,
+            i: firstChunk
+          }
+        };
+        
+        const jsonString = JSON.stringify(firstChunkPayload);
+        console.log(`Resending first chunk, size: ${jsonString.length} bytes`);
+        console.log("First chunk data preview:", jsonString.substring(0, 200) + "...");
+        
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            body: jsonString,
+            headers: {
+              "Content-Type": "application/json",
+            }
+          });
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Failed to resend first chunk:`, errorText);
+            throw new Error(`Failed to resend first chunk: ${response.status}`);
+          }
+          
+          const responseData = await response.json();
+          console.log(`First chunk resend response:`, responseData);
+          
+          if (!responseData.success) {
+            throw new Error(`First chunk resend was rejected by WLED`);
+          }
+          
+          console.log("Successfully resent first chunk");
+          console.log("=============================");
+          
+        } catch (error) {
+          progressIndicator.classList.remove("show");
+          console.error("Error resending first chunk:", error);
           throw error;
         }
       }
