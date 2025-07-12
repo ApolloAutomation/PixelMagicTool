@@ -1080,8 +1080,6 @@
               const jsonBody = JSON.stringify(body);
               const bodySize = new Blob([jsonBody]).size;
               
-              console.log(`Saving preset "${item.n}" - Size: ${bodySize} bytes`);
-              
               const options = {
                 method: "POST",
                 body: jsonBody,
@@ -1273,45 +1271,20 @@
     gId("btnSimulatePreset").addEventListener("click", async () => {
       const url = `${WLED_URL}/json/state`;
       
-      // Debug logging for payload size
       const jsonString = JSON.stringify(jsonSendWLED);
       const jsonByteSize = new Blob([jsonString]).size;
       const colorArray = jsonSendWLED.seg?.i || [];
       const pattern = gId("pattern").value;
-      
-      console.log("=== WLED Payload Debug Info ===");
-      console.log("JSON string length:", jsonString.length);
-      console.log("JSON byte size:", jsonByteSize, "bytes");
-      console.log("Color array length:", colorArray.length, "elements");
-      console.log("Pattern type:", pattern);
-      console.log("Full JSON payload:", jsonString);
-      console.log("Truncated preview (first 500 chars):", jsonString.substring(0, 500) + "...");
-      console.log("===============================");
 
       show();
 
       try {
         // Check if payload exceeds size limit
         if (jsonByteSize > MAX_PAYLOAD_SIZE) {
-          console.log(`Payload size ${jsonByteSize} exceeds limit ${MAX_PAYLOAD_SIZE}`);
-          
           // Special handling for Range pattern - force conversion to Index for large payloads
           if (pattern === "3") {
-            console.warn("⚠️ Range pattern with large payload detected!");
-            console.warn("⚠️ Converting to Index pattern for proper chunking...");
-            console.warn("⚠️ This ensures LED 661 and all other LEDs are properly updated");
-            
             // Convert Range pattern to Index pattern to fix chunking issues
             const indexArray = convertRangeToIndex(colorArray);
-            
-            console.log("Converted Range to Index pattern");
-            console.log("Original Range array length:", colorArray.length);
-            console.log("Converted Index array length:", indexArray.length);
-            
-            // Verify LED 661 is properly represented
-            if (indexArray.length >= 1324) { // 662 * 2 for index pattern
-              console.log(`🎯 LED 661 in Index pattern: index=${indexArray[1322]}, color="${indexArray[1323]}"`);
-            }
             
             // Update the pattern type for chunking
             const tempPattern = "2"; // Index pattern
@@ -1330,7 +1303,6 @@
             }
           } else {
             // For other patterns, proceed with normal chunking
-            console.log("Using chunking for pattern type:", pattern);
             toast(`Large payload detected (${(jsonByteSize/1024).toFixed(1)}KB). Sending in chunks...`, "warning", 3000);
             
             // Create chunks
@@ -1355,10 +1327,6 @@
           
           const response = await fetch(url, options);
           
-          // Enhanced error handling
-          console.log("Response status:", response.status);
-          console.log("Response headers:", [...response.headers.entries()]);
-          
           if (!response.ok) {
             const errorText = await response.text();
             console.error("WLED Error Response:", errorText);
@@ -1373,7 +1341,6 @@
           }
           
           const responseData = await response.json();
-          console.log("WLED Response:", responseData);
           
           if (responseData.success) {
             toast("Successfully simulated preset");
@@ -1641,13 +1608,6 @@
               i,
             },
           });
-          
-          // Debug logging for generated data
-          console.log("=== Generate Debug Info ===");
-          console.log("Segment dimensions:", canvas.width / 48 + "x" + canvas.height / 48);
-          console.log("Color array 'i' length:", i.length);
-          console.log("Color array sample (first 10):", i.slice(0, 10));
-          console.log("==========================");
 
           resolve();
         });
@@ -1658,7 +1618,6 @@
         // Check payload size and warn if potentially too large
         const payloadSize = new Blob([jsonData]).size;
         if (payloadSize > 10000) { // 10KB warning threshold
-          console.warn("⚠️ Large payload detected:", payloadSize, "bytes - may exceed WLED limits");
           toast(`Warning: Large data size (${(payloadSize/1024).toFixed(1)}KB) may cause issues`, "warning", 3000);
         }
 
@@ -1840,28 +1799,11 @@
             let { r, g, b } = hexToRgb(hex);
 
             colors.push(hex);
-            
-            // Track LED 661 specifically
-            if (arrayIndex === 661) {
-              console.log(`🎯 LED 661 PIXEL MAPPING:`);
-              console.log(`  - Position: row ${h}, column ${w}`);
-              console.log(`  - Array index: ${arrayIndex}`);
-              console.log(`  - Pixel ID (1-based): ${pixelId}`);
-              console.log(`  - Color: #${hex} (RGB: ${r},${g},${b})`);
-              console.log(`  - Source pixel: ${pixelX},${pixelY}`);
-            }
 
             ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
             ctx.fillRect(coordinateX, coordinateY, pixelsRef, pixelsRef);
           } else {
             colors.push("000000");
-            
-            if (arrayIndex === 661) {
-              console.log(`🎯 LED 661 PIXEL MAPPING:`);
-              console.log(`  - Position: row ${h}, column ${w}`);
-              console.log(`  - Array index: ${arrayIndex}`);
-              console.log(`  - Color: #000000 (BLACK - outside image bounds)`);
-            }
           }
 
           ctx.lineWidth = 1;
@@ -1883,60 +1825,21 @@
       const { checked: compressionEnabled } = gId("compression");
       const compressionLevel = parseInt(gId("compressionLevel").value);
       
-      // Debug: Log original colors before compression
-      console.log("=== COMPRESSION DEBUG ===");
-      console.log("Original colors length:", colors.length);
-      console.log("First 20 original colors:", colors.slice(0, 20));
-      console.log("Compression enabled:", compressionEnabled);
-      console.log("Compression level:", compressionLevel);
-      
       if (compressionEnabled && compressionLevel > 0) {
-        console.log("Applying compression level:", compressionLevel);
-        const originalColors = [...colors]; // Keep a copy for comparison
         colors = compressColors(colors, compressionLevel);
-        
-        // Debug: Compare before and after compression
-        console.log("Colors after compression length:", colors.length);
-        console.log("First 20 compressed colors:", colors.slice(0, 20));
-        console.log("Color array changed:", originalColors.length !== colors.length ||
-                    !originalColors.every((c, i) => c === colors[i]));
       }
-      
-      // Debug: Log pattern conversion
-      console.log("Pattern type:", pattern);
       
       switch (pattern) {
         case "1":
           i = colors;
-          console.log("Pattern: Individual - Array size:", i.length);
           break;
         case "2":
           i = index(colors);
-          console.log("Pattern: Index - Array size:", i.length);
-          console.log("First 20 index entries:", i.slice(0, 20));
           break;
         case "3":
           i = range(colors);
-          console.log("Pattern: Range - Array size:", i.length);
-          console.log("First 20 range entries:", i.slice(0, 20));
-          // Debug: Analyze range groups
-          let rangeGroups = [];
-          for (let j = 0; j < i.length; j++) {
-            if (typeof i[j] === 'number' && j + 2 < i.length &&
-                typeof i[j + 1] === 'number' && typeof i[j + 2] === 'string') {
-              rangeGroups.push({ start: i[j], end: i[j + 1], color: i[j + 2] });
-              j += 2;
-            }
-          }
-          console.log("Number of range groups:", rangeGroups.length);
-          console.log("First 5 range groups:", rangeGroups.slice(0, 5));
           break;
       }
-      
-      // Calculate approximate JSON size for this data
-      const testObj = { seg: { i } };
-      const approxSize = new Blob([JSON.stringify(testObj)]).size;
-      console.log("Approximate segment data size:", approxSize, "bytes");
 
       return {
         canvas,
@@ -1947,15 +1850,10 @@
     }
 
     function range(colors) {
-      console.log("=== RANGE FUNCTION DEBUG ===");
-      console.log("Input colors length:", colors.length);
-      console.log("First 20 colors:", colors.slice(0, 20));
-      
       let startIndex = 0;
       let endIndex = 0;
       let currentColor = colors[0];
       let pattern = [];
-      let rangeDebugInfo = []; // Track range creation
 
       colors.forEach((color, index) => {
         if (color !== currentColor) {
@@ -1964,21 +1862,8 @@
 
           if (repetitions == 1) {
             pattern.push(currentColor);
-            rangeDebugInfo.push({
-              type: "single",
-              index: startIndex,
-              color: currentColor
-            });
           } else {
             pattern.push(startIndex, endIndex, currentColor);
-            rangeDebugInfo.push({
-              type: "range",
-              start: startIndex,
-              end: endIndex,
-              count: repetitions,
-              color: currentColor,
-              pixels: `LEDs ${startIndex} to ${endIndex - 1}`
-            });
           }
           startIndex = index;
         }
@@ -1989,55 +1874,9 @@
 
       if (lastRepetition === 1) {
         pattern.push(currentColor);
-        rangeDebugInfo.push({
-          type: "single",
-          index: startIndex,
-          color: currentColor
-        });
       } else {
         pattern.push(startIndex, colors.length, currentColor);
-        rangeDebugInfo.push({
-          type: "range",
-          start: startIndex,
-          end: colors.length,
-          count: lastRepetition,
-          color: currentColor,
-          pixels: `LEDs ${startIndex} to ${colors.length - 1}`
-        });
       }
-
-      console.log("Range pattern created with", rangeDebugInfo.length, "groups");
-      console.log("First 5 range groups:", rangeDebugInfo.slice(0, 5));
-      console.log("Pattern array length:", pattern.length);
-      
-      // Check if LED 661 is represented in the range pattern
-      let led661Found = false;
-      for (let i = 0; i < pattern.length; i++) {
-        if (i + 2 < pattern.length &&
-            typeof pattern[i] === 'number' &&
-            typeof pattern[i + 1] === 'number' &&
-            typeof pattern[i + 2] === 'string') {
-          if (pattern[i] <= 661 && 661 < pattern[i + 1]) {
-            led661Found = true;
-            console.log(`🎯 LED 661 found in range pattern: [${pattern[i]}, ${pattern[i + 1]}, "${pattern[i + 2]}"]`);
-            console.log(`🎯 LED 661 color: ${pattern[i + 2]}`);
-            console.log(`🎯 LED 661 position in pattern array: index ${i}-${i + 2}`);
-            break;
-          }
-          i += 2; // Skip to next range
-        } else if (typeof pattern[i] === 'string') {
-          // Single color at current position
-          if (i === 661) {
-            led661Found = true;
-            console.log(`🎯 LED 661 found as single color: "${pattern[i]}"`);
-            break;
-          }
-        }
-      }
-      if (!led661Found) {
-        console.warn(`⚠️ LED 661 NOT found in range pattern!`);
-      }
-      console.log("============================");
 
       return pattern;
     }
@@ -2046,23 +1885,16 @@
     function compressColors(colors, level) {
       if (!level || level === 0) return colors;
       
-      console.log("=== COMPRESSION FUNCTION DEBUG ===");
-      console.log("Input colors length:", colors.length);
-      console.log("Compression level:", level);
-      
       // Level 1 = gentlest compression (high threshold), Level 10 = least gentle (but still conservative)
       // New range: Level 1 = 98 threshold, Level 10 = 75 threshold
       const threshold = 98 - ((level - 1) * 2.56); // 98 to 75 range
-      console.log("Similarity threshold:", threshold);
       
       const compressedColors = [];
       let i = 0;
-      let compressionGroups = []; // Track compression groups for debugging
       
       while (i < colors.length) {
         const currentColor = colors[i];
         let groupSize = 1;
-        let groupStart = i;
         
         // Look ahead to find similar colors
         for (let j = i + 1; j < colors.length && j < i + level + 1; j++) {
@@ -2076,13 +1908,6 @@
         // Average the grouped colors
         if (groupSize > 1) {
           const avgColor = averageColors(colors.slice(i, i + groupSize));
-          compressionGroups.push({
-            start: groupStart,
-            end: groupStart + groupSize - 1,
-            originalColors: colors.slice(i, i + groupSize),
-            avgColor: avgColor,
-            size: groupSize
-          });
           
           for (let k = 0; k < groupSize; k++) {
             compressedColors.push(avgColor);
@@ -2093,12 +1918,6 @@
         
         i += groupSize;
       }
-      
-      console.log("Compression groups created:", compressionGroups.length);
-      console.log("First 5 compression groups:", compressionGroups.slice(0, 5));
-      console.log(`Compression: ${colors.length} colors -> ${new Set(compressedColors).size} unique colors`);
-      console.log("Output compressed colors length:", compressedColors.length);
-      console.log("=================================");
       
       return compressedColors;
     }
@@ -2171,21 +1990,9 @@
     
     // Convert Range pattern to Index pattern for proper chunking
     function convertRangeToIndex(rangeArray) {
-      console.log("=== CONVERTING RANGE TO INDEX ===");
       const segWidth = parseInt(gId("width").value);
       const segHeight = parseInt(gId("height").value);
       const totalPixels = segWidth * segHeight;
-      
-      console.log(`Segment dimensions: ${segWidth}x${segHeight} = ${totalPixels} pixels`);
-      console.log("Range array length:", rangeArray.length);
-      
-      // DIAGNOSTIC: Track pixel coverage and LED 661 specifically
-      const pixelCoverage = new Array(totalPixels).fill(false);
-      let blackPixelCount = 0;
-      let coloredPixelCount = 0;
-      let skippedEntries = 0;
-      let led661Color = null;
-      let led661Found = false;
       
       // First, expand range pattern to full color array
       const expandedColors = new Array(totalPixels).fill("000000");
@@ -2203,23 +2010,9 @@
           const end = rangeArray[i + 1];
           const color = rangeArray[i + 2];
           
-          // Check if LED 661 is in this range
-          if (start <= 661 && 661 < end) {
-            led661Found = true;
-            led661Color = color;
-            console.log(`🎯 LED 661 found in range [${start}, ${end}] with color "${color}"`);
-          }
-          
           // Fill the pixels in this range
           for (let pixel = start; pixel < end && pixel < totalPixels; pixel++) {
             expandedColors[pixel] = color;
-            pixelCoverage[pixel] = true;
-            if (color !== "000000") coloredPixelCount++;
-            
-            // Double-check LED 661
-            if (pixel === 661) {
-              console.log(`🎯 Setting LED 661 to color "${color}" (pixel ${pixel})`);
-            }
           }
           currentPixelIndex = end; // Update position after range
           i += 3;
@@ -2228,61 +2021,14 @@
           const color = rangeArray[i];
           
           // Find the next uncovered pixel
-          while (currentPixelIndex < totalPixels && pixelCoverage[currentPixelIndex]) {
-            currentPixelIndex++;
-          }
-          
           if (currentPixelIndex < totalPixels) {
             expandedColors[currentPixelIndex] = color;
-            pixelCoverage[currentPixelIndex] = true;
-            if (color !== "000000") coloredPixelCount++;
-            
-            // Check if this is LED 661
-            if (currentPixelIndex === 661) {
-              led661Found = true;
-              led661Color = color;
-              console.log(`🎯 LED 661 set as single color "${color}" at position ${currentPixelIndex}`);
-            }
-            
             currentPixelIndex++;
-          } else {
-            console.error(`Single color "${color}" would exceed pixel array bounds!`);
-            skippedEntries++;
           }
           i += 1;
         } else {
-          console.warn(`Unexpected entry type at position ${i}:`, rangeArray[i]);
           i += 1;
         }
-      }
-      
-      // DIAGNOSTIC: Count uncovered pixels
-      for (let j = 0; j < totalPixels; j++) {
-        if (!pixelCoverage[j]) {
-          blackPixelCount++;
-        }
-      }
-      
-      console.log("DIAGNOSTIC - Pixel Coverage Analysis:");
-      console.log(`- Total pixels: ${totalPixels}`);
-      console.log(`- Colored pixels: ${coloredPixelCount}`);
-      console.log(`- Black pixels (gaps): ${blackPixelCount}`);
-      console.log(`- Skipped entries: ${skippedEntries}`);
-      console.log(`- Coverage: ${((totalPixels - blackPixelCount) / totalPixels * 100).toFixed(1)}%`);
-      
-      // Verify LED 661 status
-      if (led661Found) {
-        console.log(`✅ LED 661 successfully mapped with color "${led661Color}"`);
-        console.log(`✅ LED 661 actual color in expanded array: "${expandedColors[661]}"`);
-      } else {
-        console.error(`❌ LED 661 was NOT found in the range pattern!`);
-        console.log(`❌ LED 661 will have color: "${expandedColors[661]}" (default)`);
-      }
-      
-      // Show first gap if any
-      const firstGap = pixelCoverage.indexOf(false);
-      if (firstGap !== -1) {
-        console.warn(`First gap at pixel ${firstGap}`);
       }
       
       // Now convert to Index pattern: [0, color0, 1, color1, ...]
@@ -2290,21 +2036,6 @@
       for (let idx = 0; idx < expandedColors.length; idx++) {
         indexArray.push(idx, expandedColors[idx]);
       }
-      
-      // Final verification for LED 661 in Index pattern
-      if (indexArray.length >= 1324) { // 662 * 2 for index pattern
-        console.log(`🎯 LED 661 in final Index array: index=${indexArray[1322]}, color="${indexArray[1323]}"`);
-        if (indexArray[1322] !== 661) {
-          console.error(`❌ ERROR: Index pattern mapping error for LED 661!`);
-        }
-      }
-      
-      console.log("Conversion complete:");
-      console.log("- Total pixels:", totalPixels);
-      console.log("- Index array length:", indexArray.length);
-      console.log("- First 10 entries:", indexArray.slice(0, 10));
-      console.log("- Last 10 entries:", indexArray.slice(-10));
-      console.log("===============================");
       
       return indexArray;
     }
@@ -2536,11 +2267,6 @@
 
     // Function to split large payloads into chunks
     function createChunks(colorArray, pattern) {
-      console.log("=== CREATE CHUNKS DEBUG ===");
-      console.log("Input array length:", colorArray.length);
-      console.log("Pattern type:", pattern);
-      console.log("First 30 elements:", colorArray.slice(0, 30));
-      
       const chunks = [];
       let currentChunk = [];
       let currentSize = 100; // Base JSON overhead estimate
@@ -2553,17 +2279,9 @@
         return String(entry).length + 2; // number + comma
       }
       
-      // Note: Range pattern should already be converted to Index pattern at this point
-      if (pattern === "3") {
-        console.warn("⚠️ WARNING: Range pattern should have been converted to Index pattern!");
-        console.warn("⚠️ This indicates a logic error in the chunking flow");
-      }
-      
       if (pattern === "2") {
-        console.log("Using Index pattern chunking (safe for all cases)");
         // For Index pattern, we must keep index-color pairs together
         let i = 0;
-        let pairCount = 0;
         
         while (i < colorArray.length - 1) { // -1 because we process pairs
           const indexEntry = colorArray[i];
@@ -2572,45 +2290,33 @@
           
           // Verify this is a valid index-color pair
           if (typeof indexEntry !== 'number' || typeof colorEntry !== 'string') {
-            console.error(`Invalid Index pattern at position ${i}: expected [number, string], got [${typeof indexEntry}, ${typeof colorEntry}]`);
             break;
-          }
-          
-          // Check if LED 661 is in this pair
-          if (indexEntry === 661) {
-            console.log(`🎯 LED 661 found in chunk ${chunks.length} with color "${colorEntry}"`);
           }
           
           // Check if adding this pair exceeds chunk size
           if (currentSize + pairSize > CHUNK_SIZE && currentChunk.length > 0) {
-            console.log(`Chunk ${chunks.length} filled with ${currentChunk.length / 2} pixel pairs (${currentChunk.length} elements)`);
             chunks.push([...currentChunk]);
             currentChunk = [];
             currentSize = 100;
-            pairCount = 0;
           }
           
           // Add the index-color pair
           currentChunk.push(indexEntry, colorEntry);
           currentSize += pairSize;
-          pairCount++;
           i += 2;
         }
         
         // Handle any remaining elements (shouldn't happen with valid Index pattern)
         if (i < colorArray.length) {
-          console.warn(`⚠️ Odd number of elements in Index pattern! Remaining: ${colorArray.length - i}`);
           currentChunk.push(colorArray[i]);
         }
         
       } else if (pattern === "1") {
-        console.log("Using Individual pattern chunking");
         // For Individual pattern, each element is just a color
         for (let i = 0; i < colorArray.length; i++) {
           const entrySize = estimateEntrySize(colorArray[i]);
           
           if (currentSize + entrySize > CHUNK_SIZE && currentChunk.length > 0) {
-            console.log(`Chunk ${chunks.length} filled with ${currentChunk.length} colors`);
             chunks.push([...currentChunk]);
             currentChunk = [];
             currentSize = 100;
@@ -2620,7 +2326,6 @@
           currentSize += entrySize;
         }
       } else {
-        console.error(`Unknown pattern type: ${pattern}`);
         // Fallback to simple chunking
         for (let i = 0; i < colorArray.length; i++) {
           const entrySize = estimateEntrySize(colorArray[i]);
@@ -2638,86 +2343,23 @@
       
       // Add remaining items
       if (currentChunk.length > 0) {
-        if (pattern === "2") {
-          console.log(`Final chunk ${chunks.length} with ${currentChunk.length / 2} pixel pairs`);
-        } else {
-          console.log(`Final chunk ${chunks.length} with ${currentChunk.length} elements`);
-        }
         chunks.push(currentChunk);
       }
-      
-      console.log(`Created ${chunks.length} chunks from ${colorArray.length} elements`);
-      chunks.forEach((chunk, idx) => {
-        const chunkJson = JSON.stringify({ seg: { i: chunk } });
-        console.log(`Chunk ${idx + 1}: ${chunk.length} elements, ${chunkJson.length} bytes`);
-        console.log(`  First 10 elements:`, chunk.slice(0, 10));
-        
-        // For Index pattern, show which pixel indices this chunk covers
-        if (pattern === "2" && chunk.length >= 2) {
-          const firstPixel = chunk[0];
-          const lastPixel = chunk[chunk.length - 2]; // -2 because last element is a color
-          console.log(`  Pixel range: ${firstPixel} to ${lastPixel}`);
-          
-          // Check if LED 661 is in this chunk
-          for (let j = 0; j < chunk.length - 1; j += 2) {
-            if (chunk[j] === 661) {
-              console.log(`  🎯 Contains LED 661 with color "${chunk[j + 1]}"`);
-              break;
-            }
-          }
-        }
-      });
-      
-      console.log("==========================");
       
       return chunks;
     }
     
     // Function to send chunks sequentially
     async function sendChunks(chunks, segmentId, brightness) {
-      console.log("=== SEND CHUNKS DEBUG ===");
-      console.log("Total chunks to send:", chunks.length);
-      console.log("Segment ID:", segmentId);
-      console.log("✅ Using improved chunking algorithm that preserves pixel positions");
-      
       const progressIndicator = gId("progressIndicator");
       const progressText = gId("progressText");
       const url = `${WLED_URL}/json/state`;
       
       progressIndicator.classList.add("show");
       
-      // Check if we're using Range pattern (should already be converted to Index)
-      const pattern = gId("pattern").value;
-      console.log("Pattern type for chunking:", pattern);
-      console.log("Note: Range patterns are automatically converted to Index for chunking");
-      
       for (let i = 0; i < chunks.length; i++) {
         const isLastChunk = i === chunks.length - 1;
         progressText.textContent = `Sending chunk ${i + 1} of ${chunks.length}${isLastChunk ? ' (final chunk)' : ''}...`;
-        
-        // Analyze what pixels this chunk represents
-        console.log(`\n--- Chunk ${i + 1} Analysis ---`);
-        console.log("Chunk data length:", chunks[i].length);
-        console.log("First 20 elements:", chunks[i].slice(0, 20));
-        
-        if (pattern === "3") {
-          // For Range pattern, show which pixel ranges this chunk contains
-          let pixelCoverage = [];
-          for (let j = 0; j < chunks[i].length; j++) {
-            if (j + 2 < chunks[i].length &&
-                typeof chunks[i][j] === 'number' &&
-                typeof chunks[i][j + 1] === 'number' &&
-                typeof chunks[i][j + 2] === 'string') {
-              pixelCoverage.push(`Pixels ${chunks[i][j]}-${chunks[i][j + 1] - 1}: ${chunks[i][j + 2]}`);
-              j += 2;
-            }
-          }
-          console.log("Pixel coverage in this chunk:");
-          pixelCoverage.slice(0, 5).forEach(range => console.log("  " + range));
-          if (pixelCoverage.length > 5) {
-            console.log(`  ... and ${pixelCoverage.length - 5} more ranges`);
-          }
-        }
         
         const payload = {
           on: true,
@@ -2728,67 +2370,7 @@
           }
         };
         
-        // Critical analysis for chunk indices
-        if (pattern === "3") {
-          console.log(`\n🔍 CHUNK ${i + 1} PIXEL MAPPING ANALYSIS:`);
-          
-          // Get segment dimensions
-          const segWidth = parseInt(gId("width").value);
-          const segHeight = parseInt(gId("height").value);
-          const totalSegmentPixels = segWidth * segHeight;
-          console.log(`Segment size: ${segWidth}x${segHeight} = ${totalSegmentPixels} pixels`);
-          
-          // Analyze what pixels this chunk thinks it's updating
-          let intendedPixels = [];
-          let containsLED661 = false;
-          for (let j = 0; j < chunks[i].length; j += 3) {
-            if (j + 2 < chunks[i].length &&
-                typeof chunks[i][j] === 'number' &&
-                typeof chunks[i][j + 1] === 'number') {
-              const rangeStart = chunks[i][j];
-              const rangeEnd = chunks[i][j + 1];
-              
-              // Check if LED 661 is in this range
-              if (rangeStart <= 661 && 661 < rangeEnd) {
-                containsLED661 = true;
-                console.log(`🎯 LED 661 FOUND in range ${rangeStart}-${rangeEnd - 1} with color ${chunks[i][j + 2]}`);
-              }
-              
-              intendedPixels.push({
-                start: rangeStart,
-                end: rangeEnd - 1,
-                count: rangeEnd - rangeStart,
-                wouldBeRows: `rows ${Math.floor(rangeStart / segWidth)}-${Math.floor((rangeEnd - 1) / segWidth)}`,
-                color: chunks[i][j + 2]
-              });
-              
-              // CHECK: Are these indices beyond segment size?
-              if (rangeStart >= totalSegmentPixels) {
-                console.error(`❌ Range ${rangeStart}-${rangeEnd - 1} EXCEEDS segment size (${totalSegmentPixels})!`);
-                console.error(`❌ WLED will likely wrap or place at position ${rangeStart % totalSegmentPixels}`);
-              }
-            }
-          }
-          
-          console.log("Intended pixel updates in this chunk:", intendedPixels);
-          
-          if (containsLED661) {
-            console.log(`🎯 CHUNK ${i + 1} contains LED 661`);
-            if (i > 0) {
-              console.error(`❌ LED 661 is in chunk ${i + 1} but will be placed at wrong position!`);
-              console.error(`❌ WLED will place it at position ${661 - (i * (CHUNK_SIZE / 10))} approx`);
-            }
-          }
-          
-          if (i > 0) {
-            console.warn(`⚠️ PROBLEM: Chunk ${i + 1} contains absolute indices, not relative!`);
-            console.warn(`⚠️ WLED is receiving indices like ${intendedPixels[0]?.start || 'N/A'} but applying them from pixel 0`);
-          }
-        }
-        
         const jsonString = JSON.stringify(payload);
-        console.log(`Sending chunk ${i + 1}/${chunks.length}, size: ${jsonString.length} bytes`);
-        console.log("Payload preview:", jsonString.substring(0, 200) + "...");
         
         try {
           const response = await fetch(url, {
@@ -2801,12 +2383,10 @@
           
           if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Chunk ${i + 1} failed:`, errorText);
             throw new Error(`Failed to send chunk ${i + 1}: ${response.status}`);
           }
           
           const responseData = await response.json();
-          console.log(`Chunk ${i + 1} response:`, responseData);
           
           if (!responseData.success) {
             throw new Error(`Chunk ${i + 1} was rejected by WLED`);
@@ -2825,10 +2405,7 @@
       
       // REMOVED: First chunk resend operation that was overwriting later chunks
       // The chunking now properly handles all data without needing to resend
-      console.log("✅ All chunks sent successfully - no resend needed");
-      console.log("✅ Range pattern chunking fix prevents data overwrite");
       
-      console.log("=========================");
       progressIndicator.classList.remove("show");
       return true;
     }
@@ -2850,103 +2427,6 @@
 
       d.body.style.overflow = "auto";
     }
-
-    // Debug function to test WLED size limits
-    async function testWLEDSizeLimit() {
-      console.log("=== Testing WLED Size Limits ===");
-      const testResults = [];
-      const basePayload = {
-        on: true,
-        bri: 128,
-        seg: {
-          id: 0,
-          i: []
-        }
-      };
-      
-      // Test different payload sizes
-      const testSizes = [10, 50, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000];
-      
-      for (const size of testSizes) {
-        // Generate test data based on pattern type
-        const pattern = gId("pattern").value;
-        let testArray = [];
-        
-        if (pattern === "1") { // Individual
-          testArray = Array(size).fill("ff0000");
-        } else if (pattern === "2") { // Index
-          for (let i = 0; i < size; i += 2) {
-            testArray.push(i / 2, "ff0000");
-          }
-        } else { // Range
-          for (let i = 0; i < size; i += 3) {
-            testArray.push(i / 3, (i / 3) + 1, "ff0000");
-          }
-        }
-        
-        basePayload.seg.i = testArray;
-        const jsonString = JSON.stringify(basePayload);
-        const byteSize = new Blob([jsonString]).size;
-        
-        try {
-          const response = await fetch(`${WLED_URL}/json/state`, {
-            method: "POST",
-            body: jsonString,
-            headers: { "Content-Type": "application/json" }
-          });
-          
-          const success = response.ok;
-          testResults.push({
-            arraySize: testArray.length,
-            byteSize: byteSize,
-            stringLength: jsonString.length,
-            success: success,
-            status: response.status
-          });
-          
-          console.log(`Test ${size}: ${success ? "✓" : "✗"} (${byteSize} bytes)`);
-          
-          if (!success) {
-            console.log("Failed at size:", size, "- Breaking test");
-            break;
-          }
-          
-          // Small delay between tests
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-        } catch (error) {
-          testResults.push({
-            arraySize: testArray.length,
-            byteSize: byteSize,
-            stringLength: jsonString.length,
-            success: false,
-            error: error.message
-          });
-          console.error(`Test ${size} failed with error:`, error);
-          break;
-        }
-      }
-      
-      console.table(testResults);
-      console.log("=== Size Limit Test Complete ===");
-      
-      // Find the limit
-      const lastSuccess = testResults.filter(r => r.success).pop();
-      const firstFailure = testResults.find(r => !r.success);
-      
-      if (lastSuccess && firstFailure) {
-        console.log("Estimated limits:");
-        console.log("- Max successful byte size:", lastSuccess.byteSize);
-        console.log("- First failed byte size:", firstFailure.byteSize);
-        console.log("- Max successful array length:", lastSuccess.arraySize);
-      }
-      
-      return testResults;
-    }
-    
-    // Add debug button to UI (temporarily)
-    window.debugTestSizeLimit = testWLEDSizeLimit;
-    console.log("Debug function available: call 'debugTestSizeLimit()' in console");
 
     function validate(event) {
       event.preventDefault();
