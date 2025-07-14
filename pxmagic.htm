@@ -106,6 +106,49 @@
         color: var(--gray-light);
       }
 
+      .compression-group {
+        margin-top: 10px;
+        padding: 10px;
+        background: var(--gray-dark);
+        border-radius: 8px;
+        border: 1px solid var(--gray-medium);
+      }
+
+      .compression-group label {
+        font-size: 0.875rem;
+        margin-bottom: 8px;
+      }
+
+      .size-warning {
+        display: none;
+        margin-top: 10px;
+        padding: 10px;
+        background: var(--warning-dark);
+        color: var(--gray-light);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      .size-warning.show {
+        display: block;
+      }
+
+      .progress-indicator {
+        display: none;
+        margin-top: 10px;
+        padding: 10px;
+        background: var(--blue-dark);
+        color: var(--gray-light);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        text-align: center;
+      }
+
+      .progress-indicator.show {
+        display: block;
+      }
+
       .container {
         width: 100%;
         display: flex;
@@ -713,6 +756,49 @@
               <input type="number" name="height" id="height" value="16" />
             </div>
           </div>
+          <div class="row">
+            <div class="col-full">
+              <div class="size-warning" id="sizeWarning">
+                ⚠️ Warning: Large image dimensions detected!
+                Images larger than 100x100 pixels (10,000 total) may exceed WLED buffer limits.
+                Consider enabling compression or reducing dimensions.
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-full">
+              <div class="compression-group">
+                <label for="compression">
+                  <input type="checkbox" name="compression" id="compression" />
+                  Enable Compression
+                  <small>Reduces color data by grouping similar adjacent colors</small>
+                </label>
+                <div class="row" id="compressionOptions" style="display: none; margin-top: 10px;">
+                  <div class="col" validate>
+                    <label for="compressionLevel">Compression Level</label>
+                    <div class="input-group">
+                      <input
+                        type="range"
+                        name="compressionLevel"
+                        id="compressionLevel"
+                        min="1"
+                        max="10"
+                        value="5"
+                        class="range-slider" />
+                      <div class="input-description square">
+                        <input
+                          type="text"
+                          name="compressionLevelValue"
+                          id="compressionLevelValue"
+                          value="5" />
+                      </div>
+                    </div>
+                    <small>1 = gentlest (minimal compression), 10 = stronger (but still conservative)</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="row animation" style="display: none">
             <div class="col" validate>
               <label for="frames">Frames</label>
@@ -830,6 +916,9 @@
                 <button type="button" class="button" id="btnSimulatePreset">
                   Simulate
                 </button>
+                <div class="progress-indicator" id="progressIndicator">
+                  <span id="progressText">Sending chunk 1 of 1...</span>
+                </div>
               </div>
             </div>
           </div>
@@ -874,6 +963,11 @@
 
     let jsonSaveWLED = [];
     let jsonSendWLED = {};
+    
+    // Constants for size limits
+    const MAX_PIXELS = 10000; // 100x100 pixels
+    const MAX_PAYLOAD_SIZE = 8192; // 8KB safe limit for WLED
+    const CHUNK_SIZE = 5000; // Safe chunk size in bytes
 
     (async function () {
       await segments();
@@ -983,21 +1077,39 @@
                 ) || parseInt(items.pop()) + 1;
 
               const body = Object.assign(item, { psave: parseInt(id) });
+              const jsonBody = JSON.stringify(body);
+              const bodySize = new Blob([jsonBody]).size;
+              
               const options = {
                 method: "POST",
-                body: JSON.stringify(body),
+                body: jsonBody,
+                headers: {
+                  "Content-Type": "application/json"
+                }
               };
 
               try {
                 const response = await fetch(url, options);
+                
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  console.error(`Preset save error (${response.status}):`, errorText);
+                  toast(`Error saving preset: HTTP ${response.status}`, "error");
+                  return;
+                }
+                
                 const { success } = await response.json();
 
                 if (success) {
                   toast(`Preset "${item.n}" save successfully`);
                   window.parent.postMessage("loadPresets", WLED_URL);
+                } else {
+                  console.error("Preset save failed:", body);
+                  toast(`Failed to save preset "${item.n}"`, "error");
                 }
               } catch (error) {
-                toast(`Error saving preset: ${error}`, "error");
+                console.error("Network error saving preset:", error);
+                toast(`Error saving preset: ${error.message}`, "error");
               }
             } catch (error) {
               toast(error, "error");
@@ -1158,25 +1270,99 @@
 
     gId("btnSimulatePreset").addEventListener("click", async () => {
       const url = `${WLED_URL}/json/state`;
-
-      const options = {
-        method: "POST",
-        body: JSON.stringify(jsonSendWLED),
-      };
+      
+      const jsonString = JSON.stringify(jsonSendWLED);
+      const jsonByteSize = new Blob([jsonString]).size;
+      const colorArray = jsonSendWLED.seg?.i || [];
+      const pattern = gId("pattern").value;
 
       show();
 
       try {
-        const response = await fetch(url, options);
-        const { success } = await response.json();
-
-        if (success) {
-          toast("Successfully simulated preset");
+        // Check if payload exceeds size limit
+        if (jsonByteSize > MAX_PAYLOAD_SIZE) {
+          // Special handling for Range pattern - force conversion to Index for large payloads
+          if (pattern === "3") {
+            // Convert Range pattern to Index pattern to fix chunking issues
+            const indexArray = convertRangeToIndex(colorArray);
+            
+            // Update the pattern type for chunking
+            const tempPattern = "2"; // Index pattern
+            
+            // Show info to user
+            toast(`Large image detected. Converting to Index pattern for reliable transmission...`, "warning", 3000);
+            
+            // Create chunks with Index pattern
+            const chunks = createChunks(indexArray, tempPattern);
+            
+            // Send chunks with Index pattern
+            const success = await sendChunks(chunks, jsonSendWLED.seg.id, jsonSendWLED.bri);
+            
+            if (success) {
+              toast(`Successfully sent ${chunks.length} chunks to WLED using Index pattern`, "success");
+            }
+          } else {
+            // For other patterns, proceed with normal chunking
+            toast(`Large payload detected (${(jsonByteSize/1024).toFixed(1)}KB). Sending in chunks...`, "warning", 3000);
+            
+            // Create chunks
+            const chunks = createChunks(colorArray, pattern);
+            
+            // Send chunks
+            const success = await sendChunks(chunks, jsonSendWLED.seg.id, jsonSendWLED.bri);
+            
+            if (success) {
+              toast(`Successfully sent ${chunks.length} chunks to WLED`, "success");
+            }
+          }
+        } else {
+          // Normal single request for small payloads
+          const options = {
+            method: "POST",
+            body: jsonString,
+            headers: {
+              "Content-Type": "application/json",
+            }
+          };
+          
+          const response = await fetch(url, options);
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("WLED Error Response:", errorText);
+            
+            // Check if it's a size-related error
+            if (response.status === 413 || errorText.includes("too large") || errorText.includes("size")) {
+              toast(`Payload too large for WLED. Try enabling compression or reducing image size.`, "error");
+            } else {
+              toast(`WLED Error (${response.status}): ${errorText}`, "error");
+            }
+            return;
+          }
+          
+          const responseData = await response.json();
+          
+          if (responseData.success) {
+            toast("Successfully simulated preset");
+          } else {
+            console.error("WLED returned success=false:", responseData);
+            toast("WLED rejected the preset data", "error");
+          }
         }
       } catch (error) {
-        toast(error, "error");
+        console.error("Fetch error:", error);
+        
+        // Provide more specific error messages
+        if (error.message.includes("chunk")) {
+          toast(error.message, "error");
+        } else if (error.message.includes("network") || error.message.includes("Failed to fetch")) {
+          toast(`Network error: Unable to connect to WLED at ${hostname.value}`, "error");
+        } else {
+          toast(`Error: ${error.message}`, "error");
+        }
       } finally {
         hide();
+        gId("progressIndicator").classList.remove("show");
       }
     });
 
@@ -1228,8 +1414,10 @@
     gId("segments").addEventListener("change", (e) => {
       const { width, height } = e.target.selectedOptions[0].dataset;
 
-      gId("width").value = w;
-      gId("height").value = h;
+      gId("width").value = width;
+      gId("height").value = height;
+      
+      checkDimensions();
     });
 
     gId("output").addEventListener("change", (e) => {
@@ -1304,6 +1492,53 @@
         animation.style.display = "none";
       }
     });
+    
+    // Add event listeners for dimension validation
+    gId("width").addEventListener("input", checkDimensions);
+    gId("height").addEventListener("input", checkDimensions);
+    
+    // Add event listeners for compression controls
+    gId("compression").addEventListener("change", (e) => {
+      const { checked } = e.target;
+      gId("compressionOptions").style.display = checked ? "flex" : "none";
+    });
+    
+    gId("compressionLevel").addEventListener("input", (e) => {
+      const { value } = e.target;
+      gId("compressionLevelValue").value = value;
+    });
+    
+    gId("compressionLevelValue").addEventListener("input", (e) => {
+      const { value } = e.target;
+      const level = value <= 10 ? value : 10;
+      gId("compressionLevel").value = level;
+      e.target.value = level;
+    });
+    
+    // Function to check dimensions and show warning
+    function checkDimensions() {
+      const width = parseInt(gId("width").value) || 0;
+      const height = parseInt(gId("height").value) || 0;
+      const totalPixels = width * height;
+      
+      const sizeWarning = gId("sizeWarning");
+      
+      if (totalPixels > MAX_PIXELS) {
+        sizeWarning.classList.add("show");
+        
+        // Update warning message with specific dimensions
+        sizeWarning.innerHTML = `
+          ⚠️ Warning: Large image dimensions detected!
+          ${width}x${height} = ${totalPixels.toLocaleString()} pixels exceeds the recommended limit of ${MAX_PIXELS.toLocaleString()} pixels.
+          WLED devices typically have 4-16KB buffer limits. Consider:
+          <br>• Enabling compression
+          <br>• Reducing dimensions to under 100x100
+          <br>• Using a pattern that reduces data size
+        `;
+      } else {
+        sizeWarning.classList.remove("show");
+      }
+    }
 
     gId("btnGenerate").addEventListener("click", async (event) => {
       const { checked } = gId("animation");
@@ -1379,6 +1614,12 @@
 
         const jsonData = JSON.stringify(jsonSendWLED);
         const dataResponse = formatOutput(output, jsonData);
+        
+        // Check payload size and warn if potentially too large
+        const payloadSize = new Blob([jsonData]).size;
+        if (payloadSize > 10000) { // 10KB warning threshold
+          toast(`Warning: Large data size (${(payloadSize/1024).toFixed(1)}KB) may cause issues`, "warning", 3000);
+        }
 
         response.value = dataResponse;
         recreatedImage.appendChild(canvas);
@@ -1512,7 +1753,7 @@
 
       const fontSize = canvasWidth <= 768 ? 14 : 18;
 
-      const colors = [];
+      let colors = [];
 
       const { ctx: reference } = createCanvas(width, height);
 
@@ -1529,6 +1770,7 @@
       for (let h = 0; h < overallHeight; h++) {
         for (let w = 0; w < overallWidth; w++) {
           let pixelId = h * overallWidth + w + 1;
+          let arrayIndex = h * overallWidth + w; // Zero-based index for color array
 
           let coordinateX = w * pixelsRef;
           let coordinateY = h * pixelsRef;
@@ -1579,6 +1821,14 @@
         }
       }
 
+      // Apply compression if enabled
+      const { checked: compressionEnabled } = gId("compression");
+      const compressionLevel = parseInt(gId("compressionLevel").value);
+      
+      if (compressionEnabled && compressionLevel > 0) {
+        colors = compressColors(colors, compressionLevel);
+      }
+      
       switch (pattern) {
         case "1":
           i = colors;
@@ -1630,6 +1880,79 @@
 
       return pattern;
     }
+    
+    // Compression function to reduce color data
+    function compressColors(colors, level) {
+      if (!level || level === 0) return colors;
+      
+      // Level 1 = gentlest compression (high threshold), Level 10 = least gentle (but still conservative)
+      // New range: Level 1 = 98 threshold, Level 10 = 75 threshold
+      const threshold = 98 - ((level - 1) * 2.56); // 98 to 75 range
+      
+      const compressedColors = [];
+      let i = 0;
+      
+      while (i < colors.length) {
+        const currentColor = colors[i];
+        let groupSize = 1;
+        
+        // Look ahead to find similar colors
+        for (let j = i + 1; j < colors.length && j < i + level + 1; j++) {
+          if (colorSimilarity(currentColor, colors[j]) < threshold) {
+            groupSize++;
+          } else {
+            break;
+          }
+        }
+        
+        // Average the grouped colors
+        if (groupSize > 1) {
+          const avgColor = averageColors(colors.slice(i, i + groupSize));
+          
+          for (let k = 0; k < groupSize; k++) {
+            compressedColors.push(avgColor);
+          }
+        } else {
+          compressedColors.push(currentColor);
+        }
+        
+        i += groupSize;
+      }
+      
+      return compressedColors;
+    }
+    
+    // Calculate color similarity (0-100, 0 = identical)
+    function colorSimilarity(color1, color2) {
+      const rgb1 = hexToRgb(color1);
+      const rgb2 = hexToRgb(color2);
+      
+      const dr = rgb1.r - rgb2.r;
+      const dg = rgb1.g - rgb2.g;
+      const db = rgb1.b - rgb2.b;
+      
+      // Simple Euclidean distance
+      return Math.sqrt(dr * dr + dg * dg + db * db) / 4.41; // Normalize to 0-100
+    }
+    
+    // Average multiple colors
+    function averageColors(colors) {
+      let totalR = 0, totalG = 0, totalB = 0;
+      
+      colors.forEach(color => {
+        const rgb = hexToRgb(color);
+        totalR += rgb.r;
+        totalG += rgb.g;
+        totalB += rgb.b;
+      });
+      
+      const count = colors.length;
+      return rgbToHex(
+        Math.round(totalR / count),
+        Math.round(totalG / count),
+        Math.round(totalB / count)
+      );
+    }
 
     function pixelColor(r, g, b, a) {
       const { checked } = gId("transparentImage");
@@ -1663,6 +1986,58 @@
     function rgbToHex(r, g, b) {
       const hex = ((r << 16) | (g << 8) | b).toString(16);
       return ("000000" + hex).slice(-6);
+    }
+    
+    // Convert Range pattern to Index pattern for proper chunking
+    function convertRangeToIndex(rangeArray) {
+      const segWidth = parseInt(gId("width").value);
+      const segHeight = parseInt(gId("height").value);
+      const totalPixels = segWidth * segHeight;
+      
+      // First, expand range pattern to full color array
+      const expandedColors = new Array(totalPixels).fill("000000");
+      
+      let i = 0;
+      let currentPixelIndex = 0; // Track expected pixel position for single colors
+      
+      while (i < rangeArray.length) {
+        if (typeof rangeArray[i] === 'number' &&
+            i + 2 < rangeArray.length &&
+            typeof rangeArray[i + 1] === 'number' &&
+            typeof rangeArray[i + 2] === 'string') {
+          // Range entry: [start, end, color]
+          const start = rangeArray[i];
+          const end = rangeArray[i + 1];
+          const color = rangeArray[i + 2];
+          
+          // Fill the pixels in this range
+          for (let pixel = start; pixel < end && pixel < totalPixels; pixel++) {
+            expandedColors[pixel] = color;
+          }
+          currentPixelIndex = end; // Update position after range
+          i += 3;
+        } else if (typeof rangeArray[i] === 'string') {
+          // Single color entry - these should be placed sequentially after ranges
+          const color = rangeArray[i];
+          
+          // Find the next uncovered pixel
+          if (currentPixelIndex < totalPixels) {
+            expandedColors[currentPixelIndex] = color;
+            currentPixelIndex++;
+          }
+          i += 1;
+        } else {
+          i += 1;
+        }
+      }
+      
+      // Now convert to Index pattern: [0, color0, 1, color1, ...]
+      const indexArray = [];
+      for (let idx = 0; idx < expandedColors.length; idx++) {
+        indexArray.push(idx, expandedColors[idx]);
+      }
+      
+      return indexArray;
     }
 
     function index(colors) {
@@ -1890,6 +2265,151 @@
       });
     }
 
+    // Function to split large payloads into chunks
+    function createChunks(colorArray, pattern) {
+      const chunks = [];
+      let currentChunk = [];
+      let currentSize = 100; // Base JSON overhead estimate
+      
+      // Helper to estimate JSON size for a color entry
+      function estimateEntrySize(entry) {
+        if (typeof entry === 'string') {
+          return entry.length + 4; // quotes + comma
+        }
+        return String(entry).length + 2; // number + comma
+      }
+      
+      if (pattern === "2") {
+        // For Index pattern, we must keep index-color pairs together
+        let i = 0;
+        
+        while (i < colorArray.length - 1) { // -1 because we process pairs
+          const indexEntry = colorArray[i];
+          const colorEntry = colorArray[i + 1];
+          const pairSize = estimateEntrySize(indexEntry) + estimateEntrySize(colorEntry);
+          
+          // Verify this is a valid index-color pair
+          if (typeof indexEntry !== 'number' || typeof colorEntry !== 'string') {
+            break;
+          }
+          
+          // Check if adding this pair exceeds chunk size
+          if (currentSize + pairSize > CHUNK_SIZE && currentChunk.length > 0) {
+            chunks.push([...currentChunk]);
+            currentChunk = [];
+            currentSize = 100;
+          }
+          
+          // Add the index-color pair
+          currentChunk.push(indexEntry, colorEntry);
+          currentSize += pairSize;
+          i += 2;
+        }
+        
+        // Handle any remaining elements (shouldn't happen with valid Index pattern)
+        if (i < colorArray.length) {
+          currentChunk.push(colorArray[i]);
+        }
+        
+      } else if (pattern === "1") {
+        // For Individual pattern, each element is just a color
+        for (let i = 0; i < colorArray.length; i++) {
+          const entrySize = estimateEntrySize(colorArray[i]);
+          
+          if (currentSize + entrySize > CHUNK_SIZE && currentChunk.length > 0) {
+            chunks.push([...currentChunk]);
+            currentChunk = [];
+            currentSize = 100;
+          }
+          
+          currentChunk.push(colorArray[i]);
+          currentSize += entrySize;
+        }
+      } else {
+        // Fallback to simple chunking
+        for (let i = 0; i < colorArray.length; i++) {
+          const entrySize = estimateEntrySize(colorArray[i]);
+          
+          if (currentSize + entrySize > CHUNK_SIZE && currentChunk.length > 0) {
+            chunks.push([...currentChunk]);
+            currentChunk = [];
+            currentSize = 100;
+          }
+          
+          currentChunk.push(colorArray[i]);
+          currentSize += entrySize;
+        }
+      }
+      
+      // Add remaining items
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+      
+      return chunks;
+    }
+    
+    // Function to send chunks sequentially
+    async function sendChunks(chunks, segmentId, brightness) {
+      const progressIndicator = gId("progressIndicator");
+      const progressText = gId("progressText");
+      const url = `${WLED_URL}/json/state`;
+      
+      progressIndicator.classList.add("show");
+      
+      for (let i = 0; i < chunks.length; i++) {
+        const isLastChunk = i === chunks.length - 1;
+        progressText.textContent = `Sending chunk ${i + 1} of ${chunks.length}${isLastChunk ? ' (final chunk)' : ''}...`;
+        
+        const payload = {
+          on: true,
+          bri: brightness,
+          seg: {
+            id: segmentId,
+            i: chunks[i]
+          }
+        };
+        
+        const jsonString = JSON.stringify(payload);
+        
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            body: jsonString,
+            headers: {
+              "Content-Type": "application/json",
+            }
+          });
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to send chunk ${i + 1}: ${response.status}`);
+          }
+          
+          const responseData = await response.json();
+          
+          if (!responseData.success) {
+            throw new Error(`Chunk ${i + 1} was rejected by WLED`);
+          }
+          
+          // Small delay between chunks to avoid overwhelming the device
+          if (i < chunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          
+        } catch (error) {
+          progressIndicator.classList.remove("show");
+          throw error;
+        }
+      }
+      
+      // REMOVED: First chunk resend operation that was overwriting later chunks
+      // The chunking now properly handles all data without needing to resend
+      
+      progressIndicator.classList.remove("show");
+      return true;
+    }
+    
     function show() {
       const overlay = gId("overlay");
       overlay.classList.add("loading");
