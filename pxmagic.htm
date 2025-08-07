@@ -1861,7 +1861,7 @@
           const repetitions = endIndex - startIndex;
 
           if (repetitions == 1) {
-            pattern.push(currentColor);
+            pattern.push(startIndex, startIndex + 1, currentColor);
           } else {
             pattern.push(startIndex, endIndex, currentColor);
           }
@@ -1873,7 +1873,7 @@
       const lastRepetition = colors.length - startIndex;
 
       if (lastRepetition === 1) {
-        pattern.push(currentColor);
+        pattern.push(startIndex, startIndex + 1, currentColor);
       } else {
         pattern.push(startIndex, colors.length, currentColor);
       }
